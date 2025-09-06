@@ -1,48 +1,104 @@
-// Cloudflare Worker (save as index.js)
-// Set your OpenAI key as a Worker secret: wrangler secret put OPENAI_API_KEY
-export default {
-  async fetch(req, env) {
-    const cors = {
-      'Access-Control-Allow-Origin': req.headers.get('Origin') || '*', // lock to your Pages origin later
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    };
-    if (req.method === 'OPTIONS') return new Response('', { headers: cors });
+<!--
+JARVIS WEB – Single-File App (for GitHub Pages)
+Author: Nova/Jarvis
 
-    if (new URL(req.url).pathname !== '/chat') {
-      return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { ...cors, 'Content-Type': 'application/json' } });
+QUICK SETUP (Copy-Paste Version)
+1) Deploy a free Cloudflare Worker and set your OpenAI API key as a secret.
+2) Copy the Worker URL, e.g., https://jarvis-worker-xyz.workers.dev
+3) Open this index.html, replace the line:
+   const WORKER_URL = "YOUR_WORKER_URL";
+   with your Worker URL.
+4) Commit to a GitHub repo and enable Pages (main branch, root folder).
+5) Open your Pages URL, type or speak to Jarvis.
+
+NOTE: GitHub Pages + Cloudflare Worker free tier are free; OpenAI API uses free trial credits then paid.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jarvis – Web Assistant</title>
+  <style>
+    :root { --bg:#0b0f17; --panel:#121826; --muted:#94a3b8; --text:#e2e8f0; --accent:#60a5fa; --accent-2:#34d399; --danger:#f87171; --radius:18px; }
+    *{box-sizing:border-box;} body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif;background:linear-gradient(120deg,#0b0f17,#0a1222 60%,#0e1022);color:var(--text);} .container{max-width:980px;margin:0 auto;padding:18px;}
+    header{display:flex;align-items:center;gap:12px;padding:12px 0 4px;}
+    .logo{width:42px;height:42px;border-radius:12px;background:radial-gradient(circle at 30% 30%,#66e,#44b,#228);display:grid;place-items:center;font-weight:800;letter-spacing:1px;box-shadow:0 8px 30px rgba(0,0,0,.25);}
+    h1{margin:0;font-size:1.25rem;}
+    .subtitle{color:var(--muted);font-size:.9rem;}
+    .panel{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius);backdrop-filter:blur(6px);box-shadow:0 10px 30px rgba(0,0,0,.25);}
+    .chat{height:60vh;min-height:420px;overflow-y:auto;padding:16px;scroll-behavior:smooth;}
+    .msg{display:flex;gap:10px;margin:10px 0;}
+    .msg .avatar{width:36px;height:36px;border-radius:12px;background:#1e293b;display:grid;place-items:center;color:#94a3b8;font-weight:700;}
+    .bubble{padding:12px 14px;border-radius:14px;max-width:78%;line-height:1.45;}
+    .user .bubble{background:#0f172a;border:1px solid #1e293b;margin-left:auto;border-bottom-right-radius:6px;}
+    .ai .bubble{background:#0b1222;border:1px solid #1a2440;border-bottom-left-radius:6px;}
+    .composer{display:flex;gap:8px;padding:10px;align-items:center;border-top:1px solid rgba(255,255,255,0.06);}
+    textarea{flex:1;resize:none;height:52px;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:#0a1222;color:var(--text);}
+    button{height:42px;padding:0 14px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:#0d1528;color:var(--text);cursor:pointer;}
+    button.primary{background:linear-gradient(120deg,#2563eb,#22c55e);border:none;font-weight:600;}
+    button.mic.on{outline:2px solid var(--accent);}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">Jv</div>
+      <div>
+        <h1>Jarvis – Web Assistant</h1>
+        <div class="subtitle">Talk or type. Runs via Worker for safe API keys.</div>
+      </div>
+    </header>
+    <section class="panel" style="margin-top:12px;">
+      <div id="chat" class="chat"></div>
+      <div class="composer">
+        <button id="micBtn">🎤</button>
+        <textarea id="input" placeholder="Ask Jarvis anything..."></textarea>
+        <button id="sendBtn" class="primary">Send ➤</button>
+      </div>
+    </section>
+  </div>
+  <script>
+    // ==================== CONFIG ====================
+    const WORKER_URL = "YOUR_WORKER_URL"; // <-- Replace with your Cloudflare Worker URL
+    const MODEL = "gpt-4o-mini";
+
+    const chatEl = document.getElementById('chat');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('sendBtn');
+
+    const messages = [];
+
+    function addMessage(role,text){
+      const row=document.createElement('div');
+      row.className=`msg ${role==='assistant'?'ai':'user'}`;
+      const avatar=document.createElement('div');
+      avatar.className='avatar'; avatar.textContent=role==='assistant'?'J':'U';
+      const bubble=document.createElement('div'); bubble.className='bubble'; bubble.textContent=text;
+      row.appendChild(avatar); row.appendChild(bubble); chatEl.appendChild(row);
+      chatEl.scrollTop=chatEl.scrollHeight;
     }
 
-    try {
-      const { model = 'gpt-4o-mini', system = 'You are Jarvis, a helpful, direct assistant.', messages = [] } = await req.json();
-
-      const body = {
-        model,
-        messages: [
-          { role: 'system', content: system },
-          ...messages.map(m => ({ role: m.role, content: m.content })),
-        ],
-      };
-
-      const r = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!r.ok) {
-        const text = await r.text();
-        return new Response(JSON.stringify({ error: text }), { status: 500, headers: { ...cors, 'Content-Type': 'application/json' } });
-        }
-
-      const data = await r.json();
-      const reply = data.choices?.[0]?.message?.content ?? '';
-      return new Response(JSON.stringify({ reply }), { headers: { ...cors, 'Content-Type': 'application/json' } });
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...cors, 'Content-Type': 'application/json' } });
+    async function send(){
+      const content=inputEl.value.trim(); if(!content) return;
+      inputEl.value=''; messages.push({role:'user',content}); addMessage('user',content);
+      const thinking=addMessage('assistant','Thinking...');
+      try{
+        const res=await fetch(`${WORKER_URL}/chat`,{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({model:MODEL,messages})
+        });
+        if(!res.ok) throw new Error('Network error');
+        const data=await res.json(); const reply=data.reply||'(no reply)';
+        messages.push({role:'assistant',content:reply}); thinking.textContent=reply;
+      }catch(e){thinking.textContent='Error reaching server.'; console.error(e);}
     }
-  }
-}
+
+    sendBtn.addEventListener('click',send);
+    inputEl.addEventListener('keydown',(e)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+
+    addMessage('assistant','Hello! I am Jarvis. Type or press mic to speak.');
+  </script>
+</body>
+</html>
